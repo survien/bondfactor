@@ -1,0 +1,343 @@
+%macro simpleSum(dataset,varlist,outnme);
+data &outnme; set _null_;
+   format varnme $15. obs best12. mu best12. min best12. max best12. sd best12. skewness best12.
+   kurtosis best12. p1 best12. p5 best12. p25 best12. p50 best12. p75 best12.
+   p95 best12. p99 best12.;
+run;
+%let Num=%sysfunc(countw(&varlist));
+%do i=1 %to &Num;
+%let tmpvar=%scan(&varlist,&i);
+proc means data=&dataset noprint;
+var &tmpvar;
+output out=_summary(drop=_type_ _freq_) n=obs mean=mu min=min max=max std=sd
+skew=skewness kurt=kurtosis p1=p1 p5=p5 p25=p25 p50=p50
+p75=p75 p95=p95 p99=p99/NOINHERIT;
+run;
+data _summary;set _summary;
+format varnme $15.;
+varnme="&tmpvar";
+run;
+data _summary;retain varnme obs mu min max sd skewness kurtosis p1 p5 p25 p50 p75 p95 p99;
+set _summary;run;
+proc append base=&outnme data=_summary;run;
+%end;
+%mend;
+
+/*
+dataname is the name of the input dataset
+tvar: the time variable 
+varnme: usually the name of the return variable such as mretn for monthly return
+wvar: if portfolios are equal-weighted, wvar is empty;
+varc, vars are two sorting variables
+numc, nums are the number of groups
+outname: output dataset name for original portfolio returns;
+
+*/
+%macro doublesort_dep(dataname,tvar,varnme,wvar,varc,vars,numc,nums,outname);
+ods noresults;
+ods exclude all;
+ods graphics off;
+*;
+proc sort data=&dataname;by &tvar &varc;run;
+proc rank data=&dataname out=rankc  group=&numc;
+  by &tvar;
+  var &varc;
+  ranks rankc;
+run;
+proc sort data=rankc;by &tvar rankc &vars;run;
+proc rank data=rankc out=ranks group=&nums;by &tvar rankc;
+var &vars; ranks ranks;
+run;
+proc sort data=ranks;by &tvar rankc ranks;run;
+data ranks;set ranks;
+rankc=rankc+1;ranks=ranks+1;
+run;
+*Summarize the bond numbers in each rank in each month;
+*calculate the means;
+%if %length(&wvar)~=0 %then %do;
+	proc means data=ranks noprint;
+		by &tvar rankc ranks;
+		var &varnme;
+		weight &wvar;
+		output out=_mean_1 mean=mu/noinherit;
+	run;
+%end;
+%if %length(&wvar)=0 %then %do;
+	proc means data=ranks noprint;
+		by &tvar rankc ranks;
+		var &varnme;
+		output out=_mean_1 mean=mu/noinherit;
+	run;
+%end;
+PROC TRANSPOSE data=_mean_1 out=_t_mean_1 prefix=port;
+by &tvar;
+id rankc ranks;
+var mu;
+run;
+
+*Calculate the long short portfolios;
+%let prefix=port;
+*;
+data &outname;set _t_mean_1;run;
+%do i=1 %to &nums;
+	%catnme(&prefix,&numc,&nums,&i);
+	data &outname(drop=j);set &outname;
+		array _port[&numc] &portname;
+		port&i=0;
+		do j=1 to &numc;
+			port&i=port&i+_port[j];
+		end;
+		port&i=port&i/&numc;
+	run;
+%end;
+%do i=1 %to &numc;
+	data &outname;set &outname;
+		diff&i=port&i.&nums-port&i.1;
+	run;
+%end;
+data &outname; set &outname;
+HL=port&nums-port1;
+run;
+
+*;
+proc datasets library=work nolist noprint;
+	delete _mean_1 ranks rankc;
+quit;
+*;
+ods graphics on;
+ods exclude none;
+ods results;
+%mend doublesort_dep;
+
+*Double Sorting Indep;
+
+%macro doublesort_indep(dataname,tvar,varnme,wvar,varc,vars,numc,nums,outname);
+ods noresults;
+ods exclude all;
+ods graphics off;
+*;
+proc sort data=&dataname;by &tvar &varc;run;
+proc rank data=&dataname out=rankc  group=&numc;
+  by &tvar;
+  var &varc;
+  ranks rankc;
+run;
+proc sort data=rankc;by &tvar &vars;run;
+proc rank data=rankc out=ranks group=&nums;by &tvar;
+var &vars; ranks ranks;
+run;
+proc sort data=ranks;by &tvar rankc ranks;run;
+data ranks;set ranks;
+rankc=rankc+1;ranks=ranks+1;
+run;
+*Summarize the bond numbers in each rank in each month;
+*calculate the means;
+%if %length(&wvar)~=0 %then %do;
+	proc means data=ranks noprint;
+		by &tvar rankc ranks;
+		var &varnme;
+		weight &wvar;
+		output out=_mean_1 mean=mu/noinherit;
+	run;
+%end;
+%if %length(&wvar)=0 %then %do;
+	proc means data=ranks noprint;
+		by &tvar rankc ranks;
+		var &varnme;
+		output out=_mean_1 mean=mu/noinherit;
+	run;
+%end;
+PROC TRANSPOSE data=_mean_1 out=_t_mean_1 prefix=port;
+by &tvar;
+id rankc ranks;
+var mu;
+run;
+
+*Calculate the long short portfolios;
+%let prefix=port;
+*;
+data &outname;set _t_mean_1;run;
+%do i=1 %to &nums;
+	%catnme(&prefix,&numc,&nums,&i);
+	data &outname(drop=j);set &outname;
+		array _port[&numc] &portname;
+		port&i=0;
+		do j=1 to &numc;
+			port&i=port&i+_port[j];
+		end;
+		port&i=port&i/&numc;
+	run;
+%end;
+%do i=1 %to &numc;
+	data &outname;set &outname;
+		diff&i=port&i.&nums-port&i.1;
+	run;
+%end;
+data &outname; set &outname;
+HL=port&nums-port1;
+run;
+*;
+data longport;set _mean_1;
+	do i=1 to &numc;
+		do j=1 to &nums;
+			if rankc=i and ranks=j then portname=compress(cat("port",put(i,2.),put(j,2.)));
+		end;
+	end;
+	format portname $8.;
+	drop i j _type_;
+run;
+*;
+proc datasets library=work nolist noprint;
+	delete  _t_mean_1 ranks rankc;
+quit;
+*;
+ods graphics on;
+ods exclude none;
+ods results;
+%mend doublesort_indep;
+
+*Double Sorting on category variables;
+%macro doublesort_nom(dataname,tvar,varnme,wvar,varc,vars,numc,nums,outname);
+ods noresults;
+ods exclude all;
+ods graphics off;
+*;
+
+proc sort data=&dataname;by &tvar &varc &vars;run;
+proc rank data=&dataname out=ranks group=&nums;
+  by &tvar &varc;
+  var &vars;
+  ranks ranks;
+run;
+proc sort data=ranks;by &tvar &varc ranks;run;
+data ranks;set ranks;ranks=ranks+1;
+run;
+*Summarize the bond numbers in each rank in each month;
+*calculate the means;
+%if %length(&wvar)~=0 %then %do;
+	proc means data=ranks;
+		by &tvar &varc ranks;
+		var &varnme;
+		weight &wvar;
+		output out=_mean_1 mean=mu/noinherit;
+	run;
+%end;
+%if %length(&wvar)=0 %then %do;
+	proc means data=ranks;
+		by &tvar &varc ranks;
+		var &varnme;
+		output out=_mean_1 mean=mu/noinherit;
+	run;
+%end;
+PROC TRANSPOSE data=_mean_1 out=_t_mean_1 prefix=port;
+by &tvar;
+id &varc ranks;
+var mu;
+run;
+*Calculate the long short portfolios;
+%let prefix=port;
+*;
+data &outname;set _t_mean_1;run;
+%do i=1 %to &nums;
+	%catnme(&prefix,&numc,&nums,&i);
+	data &outname(drop=j);set &outname;
+		array _port[&numc] &portname;
+		port&i=0;
+		do j=1 to &numc;
+			port&i=port&i+_port[j];
+		end;
+		port&i=port&i/&numc;
+	run;
+%end;
+%do i=1 %to &numc;
+	data &outname;set &outname;
+		diff&i=port&i.&nums-port&i.1;
+	run;
+%end;
+data &outname; set &outname;
+HL=port&nums-port1;
+run;
+*;
+proc datasets library=work nolist noprint;
+	delete _t_mean_1 _mean_1 ranks rankc;
+quit;
+*;
+ods graphics on;
+ods exclude none;
+ods results;
+%mend doublesort_nom;
+
+%macro catnme(prefix,num1,num2,start);
+%global portname;
+%let portname=&prefix.1&start;
+
+%do k=2 %to &num1;
+	%let portname=%sysfunc(catx(%str( ),%str(&portname),%str(&prefix.&k.&start)));
+%end;
+%mend catnme;
+
+
+%macro getvars(dsn);
+    %global vlist;
+    proc sql;
+        select name into :vlist separated by ' '
+        from dictionary.columns
+        where memname = upcase("&dsn");
+    quit;
+%mend;
+
+%macro getmeans(dataset,varlist,outnme,nwlag);
+*;
+ods noresults;
+ods exclude all;
+ods graphics off;
+*;
+data &outnme; set _null_;
+   format parameter $32. estimate best8. stderr d8. tvalue 7.2 probt pvalue6.4
+   df best12. stderr_uncorr best12. tvalue_uncorr 7.2  probt_uncorr pvalue6.4;
+   label stderr='Corrected standard error of FM coefficient';
+   label tvalue='Corrected t-stat of FM coefficient';
+   label probt='Corrected p-value of FM coefficient';
+   label stderr_uncorr='Uncorrected standard error of FM coefficient';
+   label tvalue_uncorr='Uncorrected t-stat of FM coefficient';
+   label probt_uncorr='Uncorrected p-value of FM coefficient';
+   label df='Degrees of Freedom';
+run;
+%let groupnum=%sysfunc(countw(&varlist,%str(' ')));
+%do i=1 %to &groupnum;
+	%let tmpvar=%sysfunc(scan(&varlist,&i));
+	ods listing close;
+    proc means data=&dataset n std t probt;
+        var &tmpvar;
+        ods output summary=_uncorr;
+    run;
+	proc model data=&dataset;
+    	instruments const;
+     	&tmpvar=const;
+     	fit &tmpvar/gmm kernel=(bart,%eval(&nwlag+1),0);
+     	ods output parameterestimates=_params;
+	quit;
+	ods listing;
+    data _params (drop=&tmpvar._n);
+        merge _params
+              _uncorr (rename=(&tmpvar._stddev=stderr_uncorr
+                               &tmpvar._t=tvalue_uncorr
+                               &tmpvar._probt=probt_uncorr)
+                       );
+          stderr_uncorr=stderr_uncorr/&tmpvar._n**0.5;
+          parameter="&tmpvar";
+          drop esttype;
+     run;
+     proc printto log=junk;run;
+     proc append base=&outnme data=_params force; run;
+     proc printto;run;
+
+%end;
+proc datasets library=work noprint nolist;
+	delete _params _uncorr;
+quit;
+*;
+ods graphics on;
+ods exclude none;
+ods results;
+%mend getmeans;

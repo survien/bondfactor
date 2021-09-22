@@ -1,0 +1,55 @@
+%macro rollingRegression(start,final,freq,lag,tvar,stkid,dep,indep,dataname,outname);
+%let start=%sysfunc(intnx(&freq,&start,0,e));
+%let final=%sysfunc(intnx(&freq,&final,0,e));
+%let N=%sysfunc(intck(&freq,&start,&final));
+*;
+ods noresults;
+ods exclude all;
+ods graphics off;
+*Çå³ýÁÙÊ±ÎÄµµ;
+proc datasets nolist lib=work;
+  delete all_ds oreg_ds1;
+quit;
+*Run the loop;
+%do i=0 %to &N;
+
+	*Define the regression window;
+	%let date1=%sysfunc(intnx(&freq,&start,%eval(&i-1),e));
+	%let date2=%sysfunc(intnx(&freq,&start,%eval(&i-&lag),b));
+
+	*make sure the loop start with a empty  dataset;
+	proc sort data=&dataname;
+		by &stkid;
+	run;
+	*run the regression;
+	proc reg noprint data=&dataname outest=oreg_ds1 edf;
+		where &tvar between &date2 and &date1;
+		model &dep=&indep;
+		by &stkid;
+	run;
+	
+	*store the main results;
+	data oreg_ds1;
+		set oreg_ds1;
+		date1=&date1;
+		date2=&date2;
+		rename intercept=alpha;
+		format date1 date2 YYMMDD10.;
+	run;
+
+	*;
+	proc datasets lib=work;
+  		append base=all_ds data=oreg_ds1;
+	run;
+%end;
+data &outname;
+  set all_ds;
+run;
+proc datasets nolist lib=work;
+	delete all_ds oreg_ds1;
+quit;
+*;
+ods graphics on;
+ods exclude none;
+ods results;
+%mend rollingRegression;
